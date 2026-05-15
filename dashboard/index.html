@@ -1,307 +1,650 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CloudSentinel | Cloud Governance Platform</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <!-- PDF Generation Libraries -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.23/jspdf.plugin.autotable.min.js"></script>
-    <style>
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
-        .sidebar-link.active { background-color: #374151; border-left: 4px solid #3b82f6; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CloudSentinel | GCP Security Posture</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.23/jspdf.plugin.autotable.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Sora:wght@300;400;600;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:       #080c14;
+      --surface:  #0d1320;
+      --border:   #1a2540;
+      --accent:   #3b82f6;
+      --critical: #ef4444;
+      --medium:   #f59e0b;
+      --info:     #10b981;
+      --text:     #e2e8f0;
+      --muted:    #64748b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: 'Sora', sans-serif; display: flex; height: 100vh; overflow: hidden; }
+    code, .mono { font-family: 'JetBrains Mono', monospace; }
+
+    /* Sidebar */
+    #sidebar {
+      width: 240px; min-width: 240px; background: var(--surface);
+      border-right: 1px solid var(--border); display: flex; flex-direction: column;
+      padding: 28px 16px; transition: width .3s;
+    }
+    .logo { display: flex; align-items: center; gap: 10px; margin-bottom: 36px; padding: 0 8px; }
+    .logo-icon { width: 34px; height: 34px; background: var(--accent); border-radius: 8px;
+      display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
+    .logo-text h1 { font-size: 15px; font-weight: 800; letter-spacing: .02em; }
+    .logo-text p  { font-size: 10px; color: var(--muted); margin-top: 1px; }
+    .nav-group { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+    .nav-btn {
+      display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px;
+      font-size: 13px; font-weight: 600; color: var(--muted); cursor: pointer;
+      border: none; background: transparent; width: 100%; text-align: left; transition: all .15s;
+    }
+    .nav-btn:hover { background: rgba(59,130,246,.08); color: var(--text); }
+    .nav-btn.active { background: rgba(59,130,246,.15); color: var(--accent); }
+    .nav-btn .icon { width: 20px; text-align: center; font-size: 15px; }
+    .nav-footer { border-top: 1px solid var(--border); padding-top: 16px; font-size: 10px; color: var(--muted); text-align: center; letter-spacing: .06em; text-transform: uppercase; }
+
+    /* Main */
+    #main { flex: 1; overflow-y: auto; padding: 36px 40px; }
+    .tab { display: none; }
+    .tab.active { display: block; }
+
+    /* Auth gate */
+    #auth-gate {
+      position: fixed; inset: 0; background: rgba(8,12,20,.96); z-index: 100;
+      display: flex; align-items: center; justify-content: center; backdrop-filter: blur(4px);
+    }
+    .auth-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+      padding: 40px 48px; width: 400px; text-align: center;
+    }
+    .auth-card h2 { font-size: 20px; font-weight: 800; margin-bottom: 6px; }
+    .auth-card p  { font-size: 13px; color: var(--muted); margin-bottom: 28px; }
+    .auth-input {
+      width: 100%; padding: 12px 16px; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 13px;
+      margin-bottom: 14px; outline: none; transition: border .2s;
+    }
+    .auth-input:focus { border-color: var(--accent); }
+    .auth-btn {
+      width: 100%; padding: 12px; background: var(--accent); border: none; border-radius: 8px;
+      color: #fff; font-weight: 700; font-size: 14px; cursor: pointer; transition: opacity .15s;
+    }
+    .auth-btn:hover { opacity: .88; }
+    #auth-error { color: var(--critical); font-size: 12px; margin-top: 10px; display: none; }
+
+    /* Page header */
+    .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 32px; }
+    .page-title { font-size: 26px; font-weight: 800; }
+    .page-title span { color: var(--accent); }
+
+    /* Stat cards */
+    .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
+    .stat-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+      padding: 20px 22px; position: relative; overflow: hidden;
+    }
+    .stat-card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+      background: var(--card-color, var(--accent));
+    }
+    .stat-card .label { font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: .08em; color: var(--muted); margin-bottom: 10px; }
+    .stat-card .value { font-size: 36px; font-weight: 800; line-height: 1; color: var(--card-color, var(--text)); }
+    .stat-card .sub   { font-size: 11px; color: var(--muted); margin-top: 6px; }
+
+    /* Charts */
+    .charts-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 28px; }
+    .chart-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 22px;
+    }
+    .chart-card h3 { font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 18px; text-transform: uppercase; letter-spacing: .06em; }
+
+    /* Scan button */
+    .scan-btn {
+      display: flex; align-items: center; gap: 8px; padding: 10px 22px;
+      background: var(--accent); border: none; border-radius: 8px; color: #fff;
+      font-weight: 700; font-size: 13px; cursor: pointer; transition: all .15s;
+    }
+    .scan-btn:hover { opacity: .88; transform: translateY(-1px); }
+    .scan-btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+    .scan-btn .spin { animation: spin 1s linear infinite; display: none; }
+    .scan-btn.loading .spin { display: inline-block; }
+    .scan-btn.loading .idle { display: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Findings table */
+    .table-wrap {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead tr { background: rgba(255,255,255,.03); }
+    th { padding: 14px 20px; font-size: 11px; font-weight: 600; text-transform: uppercase;
+         letter-spacing: .06em; color: var(--muted); text-align: left; }
+    td { padding: 14px 20px; border-top: 1px solid var(--border); vertical-align: middle; }
+    tbody tr:hover { background: rgba(59,130,246,.04); }
+    .resource-cell { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #93c5fd; max-width: 280px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ts { font-size: 10px; color: var(--muted); margin-top: 3px; }
+    .cis-badge { font-family: 'JetBrains Mono', monospace; font-size: 10px; background: rgba(59,130,246,.12);
+      color: #93c5fd; padding: 2px 7px; border-radius: 4px; }
+
+    /* Severity badges */
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+    .badge-CRITICAL { background: rgba(239,68,68,.2); color: #fca5a5; border: 1px solid rgba(239,68,68,.4); }
+    .badge-MEDIUM   { background: rgba(245,158,11,.15); color: #fcd34d; border: 1px solid rgba(245,158,11,.35); }
+    .badge-INFO     { background: rgba(16,185,129,.12); color: #6ee7b7; border: 1px solid rgba(16,185,129,.3); }
+
+    /* Cost list */
+    .cost-item { display: flex; justify-content: space-between; align-items: center;
+      padding: 12px 0; border-bottom: 1px solid var(--border); }
+    .cost-item:last-child { border-bottom: none; }
+    .cost-name { font-size: 13px; text-transform: capitalize; }
+    .cost-val  { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--medium); font-weight: 700; }
+
+    /* Settings */
+    .settings-group { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 20px; }
+    .settings-group h3 { font-size: 14px; font-weight: 700; margin-bottom: 18px; }
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    .field label { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+    .field input {
+      padding: 10px 14px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+      color: var(--text); font-size: 13px; outline: none; transition: border .2s;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .field input:focus { border-color: var(--accent); }
+    .save-btn {
+      padding: 10px 24px; background: var(--accent); border: none; border-radius: 8px;
+      color: #fff; font-weight: 700; font-size: 13px; cursor: pointer; transition: opacity .15s;
+    }
+    .save-btn:hover { opacity: .88; }
+    .toast {
+      position: fixed; bottom: 28px; right: 28px; background: #1e293b; border: 1px solid var(--border);
+      border-radius: 10px; padding: 14px 20px; font-size: 13px; z-index: 200;
+      transform: translateY(80px); opacity: 0; transition: all .3s; pointer-events: none;
+    }
+    .toast.show { transform: translateY(0); opacity: 1; }
+    .toast.ok   { border-left: 3px solid var(--info); }
+    .toast.err  { border-left: 3px solid var(--critical); }
+
+    /* Reports */
+    .report-btns { display: flex; gap: 14px; }
+    .report-btn {
+      padding: 12px 28px; border: 1px solid var(--border); border-radius: 8px;
+      font-weight: 700; font-size: 13px; cursor: pointer; transition: all .15s;
+      background: var(--surface); color: var(--text);
+    }
+    .report-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .report-btn.red { background: rgba(239,68,68,.1); border-color: rgba(239,68,68,.4); color: #fca5a5; }
+    .report-btn.red:hover { background: rgba(239,68,68,.2); }
+
+    /* Clean scan banner */
+    .clean-banner {
+      display: flex; align-items: center; gap: 12px;
+      background: rgba(16,185,129,.08); border: 1px solid rgba(16,185,129,.25);
+      border-radius: 10px; padding: 16px 20px; font-size: 14px; color: #6ee7b7;
+    }
+  </style>
 </head>
-<body class="bg-gray-900 text-white font-sans flex overflow-hidden">
+<body>
 
-    <!-- 🛠️ Sidebar Navigation -->
-    <nav class="w-64 bg-gray-800 h-screen border-r border-gray-700 flex flex-col p-6 shadow-2xl">
-        <div class="mb-10 text-center md:text-left">
-            <h1 class="text-2xl font-bold text-blue-500">CloudSentinel</h1>
-            <p class="text-xs text-gray-400 font-light">GCP Security & FinOps</p>
+<!-- ── AUTH GATE ─────────────────────────────────────── -->
+<div id="auth-gate">
+  <div class="auth-card">
+    <div style="font-size:36px;margin-bottom:14px">🛡️</div>
+    <h2>CloudSentinel</h2>
+    <p>Enter your API key to access the security dashboard</p>
+    <input id="api-key-input" class="auth-input" type="password" placeholder="X-API-Key" autocomplete="off">
+    <button class="auth-btn" onclick="doAuth()">Authenticate</button>
+    <div id="auth-error">Invalid API key. Please try again.</div>
+  </div>
+</div>
+
+<!-- ── SIDEBAR ────────────────────────────────────────── -->
+<nav id="sidebar">
+  <div class="logo">
+    <div class="logo-icon">🛡️</div>
+    <div class="logo-text">
+      <h1>CloudSentinel</h1>
+      <p>GCP Security Posture</p>
+    </div>
+  </div>
+  <div class="nav-group">
+    <button class="nav-btn active" onclick="switchTab('dashboard')" id="nav-dashboard">
+      <span class="icon">📊</span> Overview
+    </button>
+    <button class="nav-btn" onclick="switchTab('scans')" id="nav-scans">
+      <span class="icon">🔍</span> Findings
+    </button>
+    <button class="nav-btn" onclick="switchTab('finops')" id="nav-finops">
+      <span class="icon">💰</span> FinOps
+    </button>
+    <button class="nav-btn" onclick="switchTab('reports')" id="nav-reports">
+      <span class="icon">📄</span> Reports
+    </button>
+    <button class="nav-btn" onclick="switchTab('settings')" id="nav-settings">
+      <span class="icon">⚙️</span> Settings
+    </button>
+  </div>
+  <div class="nav-footer">JIIT Noida · Batch 2026</div>
+</nav>
+
+<!-- ── MAIN ───────────────────────────────────────────── -->
+<main id="main">
+
+  <!-- DASHBOARD -->
+  <section class="tab active" id="dashboard">
+    <div class="page-header">
+      <div>
+        <div class="page-title">Executive <span>Overview</span></div>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px" id="last-scan-time">Last scan: —</div>
+      </div>
+      <button class="scan-btn" id="scan-btn" onclick="runScan()">
+        <span class="idle">▶ Run Full Audit</span>
+        <span class="spin">↻</span><span class="loading-text" style="display:none"> Scanning…</span>
+      </button>
+    </div>
+
+    <div class="stat-grid">
+      <div class="stat-card" style="--card-color:var(--critical)">
+        <div class="label">Critical Issues</div>
+        <div class="value" id="stat-critical">—</div>
+        <div class="sub">Requires immediate action</div>
+      </div>
+      <div class="stat-card" style="--card-color:var(--medium)">
+        <div class="label">Medium Issues</div>
+        <div class="value" id="stat-medium">—</div>
+        <div class="sub">Should be addressed soon</div>
+      </div>
+      <div class="stat-card" style="--card-color:var(--info)">
+        <div class="label">Compliance Score</div>
+        <div class="value" id="stat-score">—</div>
+        <div class="sub">CIS GCP Benchmark</div>
+      </div>
+      <div class="stat-card" style="--card-color:var(--accent)">
+        <div class="label">Controls Checked</div>
+        <div class="value" id="stat-controls">7</div>
+        <div class="sub">CIS GCP checks active</div>
+      </div>
+    </div>
+
+    <div class="charts-grid">
+      <div class="chart-card">
+        <h3>Compliance Trend</h3>
+        <canvas id="trendChart" height="160"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3>Risk Distribution</h3>
+        <canvas id="severityChart" height="160"></canvas>
+      </div>
+    </div>
+  </section>
+
+  <!-- FINDINGS -->
+  <section class="tab" id="scans">
+    <div class="page-header">
+      <div class="page-title">Security <span>Findings</span></div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <select id="sev-filter" onchange="filterFindings()" style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:8px;font-size:13px;outline:none">
+          <option value="">All Severities</option>
+          <option value="CRITICAL">Critical</option>
+          <option value="MEDIUM">Medium</option>
+        </select>
+      </div>
+    </div>
+    <!-- FIX #3: Clean-scan banner shown when scan passes with zero real findings -->
+    <div id="clean-banner" class="clean-banner" style="display:none;margin-bottom:20px">
+      ✅ &nbsp;<strong>All checks passed.</strong>&nbsp; No security issues detected in the last scan.
+    </div>
+    <div class="table-wrap">
+      <table id="findings-table">
+        <thead>
+          <tr>
+            <th>Resource</th>
+            <th>Issue</th>
+            <th>CIS Control</th>
+            <th style="text-align:center">Severity</th>
+          </tr>
+        </thead>
+        <tbody id="findings-body">
+          <tr><td colspan="4" style="text-align:center;color:var(--muted);padding:40px">
+            Run a scan or authenticate to load findings.
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- FINOPS -->
+  <section class="tab" id="finops">
+    <div class="page-header">
+      <div class="page-title">FinOps <span>Hub</span></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="chart-card">
+        <h3>Cost Breakdown Per Scan</h3>
+        <div id="cost-list" style="margin-top:8px"></div>
+      </div>
+      <div class="chart-card" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px">
+        <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Est. Cost Per Scan</div>
+        <div id="cost-total" style="font-size:52px;font-weight:900;color:var(--info);font-family:'JetBrains Mono',monospace">$—</div>
+        <div style="font-size:11px;color:var(--muted)">*Approximate. Enable BQ billing export for actuals.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- REPORTS -->
+  <section class="tab" id="reports">
+    <div class="page-header">
+      <div class="page-title">Compliance <span>Reports</span></div>
+    </div>
+    <div class="settings-group">
+      <h3>Export Audit Data</h3>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:22px">
+        Generate official audit logs from the current findings data.
+      </p>
+      <div class="report-btns">
+        <button class="report-btn" onclick="exportCSV()">⬇ Export CSV</button>
+        <button class="report-btn red" onclick="generatePDF()">⬇ Generate PDF</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section class="tab" id="settings">
+    <div class="page-header">
+      <div class="page-title">Scanner <span>Settings</span></div>
+    </div>
+
+    <div class="settings-group">
+      <h3>🔗 Scanner Endpoint</h3>
+      <div class="field-row">
+        <div class="field" style="grid-column:span 2">
+          <label>Backend URL</label>
+          <input id="cfg-url" type="text" value="https://cspm-scanner-347047387956.us-central1.run.app">
         </div>
-        
-        <div class="space-y-2 flex-1">
-            <button onclick="switchTab('dashboard')" id="nav-dashboard" class="sidebar-link active w-full text-left p-3 rounded-lg hover:bg-gray-700 transition flex items-center gap-3">
-                <span>📊</span> Dashboard
-            </button>
-            <button onclick="switchTab('scans')" id="nav-scans" class="sidebar-link w-full text-left p-3 rounded-lg hover:bg-gray-700 transition flex items-center gap-3">
-                <span>🔍</span> Security Scans
-            </button>
-            <button onclick="switchTab('finops')" id="nav-finops" class="sidebar-link w-full text-left p-3 rounded-lg hover:bg-gray-700 transition flex items-center gap-3">
-                <span>💰</span> FinOps Hub
-            </button>
-            <button onclick="switchTab('reports')" id="nav-reports" class="sidebar-link w-full text-left p-3 rounded-lg hover:bg-gray-700 transition flex items-center gap-3">
-                <span>📄</span> Compliance Reports
-            </button>
+      </div>
+    </div>
+
+    <div class="settings-group">
+      <h3>🔔 Slack Alerting</h3>
+      <div class="field-row">
+        <div class="field" style="grid-column:span 2">
+          <label>Webhook URL</label>
+          <input id="cfg-slack" type="text" placeholder="https://hooks.slack.com/services/...">
         </div>
+      </div>
+      <p style="font-size:11px;color:var(--muted)">Set SLACK_WEBHOOK_URL env var on the Cloud Run service. This UI field is for display reference only.</p>
+    </div>
 
-        <div class="pt-6 border-t border-gray-700 text-[10px] text-gray-500 uppercase tracking-widest text-center">
-            JIIT Noida | Batch 2026
+    <div class="settings-group">
+      <h3>📧 Email Alerting</h3>
+      <div class="field-row">
+        <div class="field">
+          <label>SMTP Host</label>
+          <input id="cfg-smtp-host" type="text" value="smtp.gmail.com">
         </div>
-    </nav>
+        <div class="field">
+          <!-- FIX #2: Default port updated to 465 to match SMTP_SSL in the backend -->
+          <label>SMTP Port</label>
+          <input id="cfg-smtp-port" type="text" value="465">
+        </div>
+        <div class="field">
+          <label>From Address</label>
+          <input id="cfg-smtp-user" type="text" placeholder="alerts@example.com">
+        </div>
+        <div class="field">
+          <label>Recipient</label>
+          <input id="cfg-email-to" type="text" placeholder="security-team@example.com">
+        </div>
+      </div>
+      <p style="font-size:11px;color:var(--muted);margin-bottom:16px">Set SMTP_USER, SMTP_PASS, and ALERT_EMAIL_TO env vars on the Cloud Run service.</p>
+      <button class="save-btn" onclick="saveSettings()">Save Settings</button>
+    </div>
+  </section>
 
-    <!-- 🖥️ Main Content Area -->
-    <main class="flex-1 h-screen overflow-y-auto p-8 relative">
-        
-        <!-- 🏠 TAB: DASHBOARD -->
-        <section id="dashboard" class="tab-content active">
-            <div class="flex justify-between items-center mb-8">
-                <h2 class="text-3xl font-bold">Executive Overview</h2>
-                <button onclick="triggerNewScan()" class="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded-lg font-semibold transition shadow-lg">Run Full Audit</button>
-            </div>
+</main>
 
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                <div class="bg-gray-800 p-6 rounded-xl border-l-4 border-red-500 shadow-xl">
-                    <p class="text-gray-400 text-xs uppercase font-bold">Critical Vulnerabilities</p>
-                    <h2 id="critical-count" class="text-4xl font-black mt-2">0</h2>
-                </div>
-                <div class="bg-gray-800 p-6 rounded-xl border-l-4 border-green-500 shadow-xl">
-                    <p class="text-gray-400 text-xs uppercase font-bold">Compliance Score</p>
-                    <h2 id="compliance-score" class="text-4xl font-black mt-2">100%</h2>
-                </div>
-                <div class="bg-gray-800 p-6 rounded-xl border-l-4 border-yellow-500 shadow-xl">
-                    <p class="text-gray-400 text-xs uppercase font-bold">Est. Cost Per Scan</p>
-                    <h2 id="scan-cost-display" class="text-4xl font-black mt-2">$0.00018</h2>
-                </div>
-            </div>
+<div class="toast" id="toast"></div>
 
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                <div class="bg-gray-800 p-6 rounded-xl shadow-xl border border-gray-700">
-                    <h3 class="text-gray-300 font-semibold mb-4">Historical Compliance Trend</h3>
-                    <canvas id="trendChart" height="200"></canvas>
-                </div>
-                <div class="bg-gray-800 p-6 rounded-xl shadow-xl border border-gray-700">
-                    <h3 class="text-gray-300 font-semibold mb-4">Risk Distribution</h3>
-                    <canvas id="severityChart" height="200"></canvas>
-                </div>
-            </div>
-        </section>
+<script>
+  // ── State ──────────────────────────────────────────────────────
+  let API_KEY = '';
+  let BASE_URL = 'https://cspm-scanner-347047387956.us-central1.run.app';
+  let allFindings = [];
+  let trendChart, severityChart;
 
-        <!-- 🔍 TAB: SECURITY SCANS -->
-        <section id="scans" class="tab-content">
-            <h2 class="text-3xl font-bold mb-8 text-blue-400">Detailed Security Findings</h2>
-            <div class="bg-gray-800 rounded-xl overflow-hidden shadow-2xl border border-gray-700">
-                <table id="main-audit-table" class="w-full text-left text-sm">
-                    <thead class="bg-gray-700 text-gray-300 uppercase text-xs tracking-wider">
-                        <tr>
-                            <th class="px-6 py-4">Asset Resource</th>
-                            <th class="px-6 py-4">Security Policy Violation</th>
-                            <th class="px-6 py-4 text-center">Severity Level</th>
-                        </tr>
-                    </thead>
-                    <tbody id="findings-body"></tbody>
-                </table>
-            </div>
-        </section>
+  // ── Auth ───────────────────────────────────────────────────────
+  function doAuth() {
+    const key = document.getElementById('api-key-input').value.trim();
+    if (!key) return;
+    API_KEY = key;
+    document.getElementById('auth-gate').style.display = 'none';
+    loadAll();
+  }
+  document.getElementById('api-key-input').addEventListener('keydown', e => { if (e.key === 'Enter') doAuth(); });
 
-        <!-- 💰 TAB: FINOPS HUB -->
-        <section id="finops" class="tab-content">
-            <h2 class="text-3xl font-bold mb-8 text-yellow-500">Financial Governance</h2>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
-                <div class="bg-gray-800 p-8 rounded-2xl shadow-xl border border-gray-700">
-                    <h3 class="text-xl font-bold mb-6">Service Cost Breakdown (per scan)</h3>
-                    <ul id="cost-list" class="space-y-4">
-                        <!-- Dynamic Costs Populated via fetchCosts() -->
-                    </ul>
-                </div>
-                <div class="bg-gray-800 p-8 rounded-2xl flex flex-col items-center justify-center border border-gray-700">
-                    <p class="text-gray-400 mb-2">Total Project Spend (24h)</p>
-                    <h1 id="total-project-spend" class="text-6xl font-black text-green-400">$0.00</h1>
-                    <p class="text-[10px] text-gray-500 mt-4 italic">*Syncing with BigQuery Billing Export...</p>
-                </div>
-            </div>
-        </section>
+  // ── Nav ────────────────────────────────────────────────────────
+  function switchTab(id) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+    document.getElementById('nav-' + id).classList.add('active');
+  }
 
-        <!-- 📄 TAB: REPORTS -->
-        <section id="reports" class="tab-content">
-            <h2 class="text-3xl font-bold mb-8">Compliance Reporting</h2>
-            <div class="bg-gray-800 p-8 rounded-xl border border-dashed border-gray-600 text-center shadow-inner">
-                <p class="text-gray-400 mb-6 italic">Prepare your official audit logs for submission.</p>
-                <div class="flex justify-center gap-4">
-                    <button onclick="exportCSV()" class="bg-gray-700 hover:bg-gray-600 px-8 py-3 rounded font-bold transition">Export CSV</button>
-                    <button onclick="generatePDF()" class="bg-red-600 hover:bg-red-700 px-8 py-3 rounded font-bold transition">Generate PDF</button>
-                </div>
-            </div>
-        </section>
-    </main>
+  // ── API helper ─────────────────────────────────────────────────
+  async function apiFetch(path, method = 'GET') {
+    const url = (document.getElementById('cfg-url')?.value || BASE_URL) + path;
+    const res  = await fetch(url, { method, headers: { 'X-API-Key': API_KEY } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  }
 
-    <script>
-        let trendChart, severityChart;
+  // ── Toast ──────────────────────────────────────────────────────
+  function toast(msg, type = 'ok') {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className = `toast show ${type}`;
+    setTimeout(() => el.classList.remove('show'), 3500);
+  }
 
-        // 🔄 Navigation Logic
-        function switchTab(tabId) {
-            document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
-            document.querySelectorAll('.sidebar-link').forEach(link => link.classList.remove('active'));
-            document.getElementById(tabId).classList.add('active');
-            document.getElementById('nav-' + tabId).classList.add('active');
-        }
+  // ── Scan ───────────────────────────────────────────────────────
+  async function runScan() {
+    const btn = document.getElementById('scan-btn');
+    btn.disabled = true;
+    btn.classList.add('loading');
+    document.querySelector('.loading-text').style.display = 'inline';
+    try {
+      const result = await apiFetch('/scan', 'POST');
+      await loadAll();
+      // FIX #3: Show "clean" vs "issues found" message based on actual result
+      if (result.clean) {
+        toast('Audit complete — no issues found! ✅', 'ok');
+      } else {
+        toast(`Audit complete — ${result.total_findings} finding(s) updated.`, 'ok');
+      }
+    } catch (e) {
+      toast('Scan failed: ' + e.message, 'err');
+    } finally {
+      btn.disabled = false;
+      btn.classList.remove('loading');
+      document.querySelector('.loading-text').style.display = 'none';
+    }
+  }
 
-        async function triggerNewScan() {
-            const btn = event.target;
-            btn.innerText = "Analyzing Cloud Infrastructure...";
-            btn.disabled = true;
-            try {
-                await fetch('https://cspm-scanner-347047387956.us-central1.run.app/scan', { method: 'POST' });
-                await fetchFindings();
-                await fetchCosts();
-                alert("Audit Complete! Vulnerabilities and Costs updated.");
-            } finally {
-                btn.innerText = "Run Full Audit";
-                btn.disabled = false;
-            }
-        }
+  // ── Load all data ──────────────────────────────────────────────
+  async function loadAll() {
+    await Promise.allSettled([loadFindings(), loadCosts()]);
+  }
 
-        // 📊 Billing Logic
-        async function fetchCosts() {
-            try {
-                const response = await fetch('https://cspm-scanner-347047387956.us-central1.run.app/api/detailed-costs');
-                const data = await response.json();
-                const list = document.getElementById('cost-list');
-                list.innerHTML = '';
-                
-                let totalDaily = 0;
-                for (const [service, cost] of Object.entries(data.breakdown)) {
-                    totalDaily += cost;
-                    list.innerHTML += `
-                        <li class="flex justify-between items-center border-b border-gray-700 pb-2">
-                            <span class="text-gray-300 capitalize text-sm">${service.replace(/_/g, ' ')}</span>
-                            <span class="font-mono text-yellow-500 font-bold">$${cost.toFixed(6)}</span>
-                        </li>`;
-                }
-                document.getElementById('scan-cost-display').innerText = `$${data.per_scan_cost.toFixed(5)}`;
-                document.getElementById('total-project-spend').innerText = `$${totalDaily.toFixed(2)}`;
-            } catch (e) { console.error("Billing fetch failed", e); }
-        }
+  // ── Findings ───────────────────────────────────────────────────
+  async function loadFindings() {
+    try {
+      const data = await apiFetch('/api/findings');
+      // FIX #3: Filter out any legacy INFO rows that may exist in BigQuery
+      // from older scanner versions (belt-and-suspenders guard on the frontend too).
+      allFindings = data.filter(f => f.severity !== 'INFO');
+      renderFindings(allFindings);
+      updateStats(allFindings);
+      renderCharts(allFindings);
+      const latestTs = data[0]?.timestamp;
+      document.getElementById('last-scan-time').textContent =
+        'Last scan: ' + (latestTs ? new Date(latestTs).toLocaleString() : 'Unknown');
+    } catch (e) {
+      console.warn('Findings load failed:', e.message);
+    }
+  }
 
-        // 🔍 Security Logic
-        async function fetchFindings() {
-            const response = await fetch('https://cspm-scanner-347047387956.us-central1.run.app/api/findings');
-            const data = await response.json();
-            const tableBody = document.getElementById('findings-body');
-            
-            tableBody.innerHTML = '';
-            let criticals = 0;
-            let score = 100;
+  function renderFindings(data) {
+    const body   = document.getElementById('findings-body');
+    const banner = document.getElementById('clean-banner');
 
-            data.forEach(item => {
-                if(item.severity === 'CRITICAL') { criticals++; score -= 10; }
-                else if(item.severity === 'MEDIUM') { score -= 5; }
-                
-                const severityClass = 
-                    item.severity === 'CRITICAL' ? 'bg-red-900 text-red-200' : 
-                    item.severity === 'MEDIUM' ? 'bg-yellow-900 text-yellow-100 border border-yellow-700' : 
-                    'bg-blue-900 text-blue-200';
+    if (!data.length) {
+      // FIX #3: Show a proper "clean" banner instead of letting the table appear empty
+      banner.style.display = 'flex';
+      body.innerHTML = '';
+      return;
+    }
+    banner.style.display = 'none';
+    body.innerHTML = data.map(f => {
+      const ts = f.timestamp ? new Date(f.timestamp).toLocaleString() : '';
+      return `<tr>
+        <td><div class="resource-cell">${f.resource}</div><div class="ts">${ts}</div></td>
+        <td style="font-size:13px">${f.issue.replace(/_/g,' ')}</td>
+        <td><span class="cis-badge">${f.cis_control || '—'}</span></td>
+        <td style="text-align:center"><span class="badge badge-${f.severity}">${f.severity}</span></td>
+      </tr>`;
+    }).join('');
+  }
 
-                const date = item.timestamp ? new Date(item.timestamp).toLocaleString() : "Recently";
-                const row = `
-                    <tr class="border-b border-gray-700 hover:bg-gray-750 transition">
-                        <td class="px-6 py-4 font-mono text-[10px] text-blue-300">
-                            ${item.resource}<br>
-                            <span class="text-[9px] text-gray-500 font-sans">${date}</span>
-                        </td>
-                        <td class="px-6 py-4">${item.issue}</td>
-                        <td class="px-6 py-4 text-center">
-                            <span class="px-3 py-1 rounded-full text-[9px] font-black uppercase ${severityClass}">
-                                ${item.severity}
-                            </span>
-                        </td>
-                    </tr>`;
-                tableBody.innerHTML += row;
-            });
+  function filterFindings() {
+    const sev = document.getElementById('sev-filter').value;
+    const filtered = sev ? allFindings.filter(f => f.severity === sev) : allFindings;
+    renderFindings(filtered);
+  }
 
-            document.getElementById('critical-count').innerText = criticals;
-            document.getElementById('compliance-score').innerText = Math.max(0, score) + "%";
-            initCharts(data);
-        }
+  function updateStats(data) {
+    const crit  = data.filter(f => f.severity === 'CRITICAL').length;
+    const med   = data.filter(f => f.severity === 'MEDIUM').length;
+    const score = Math.max(0, 100 - crit * 10 - med * 5);
+    document.getElementById('stat-critical').textContent = crit;
+    document.getElementById('stat-medium').textContent   = med;
+    document.getElementById('stat-score').textContent    = score + '%';
+    document.getElementById('stat-score').style.color    = score >= 80 ? 'var(--info)' : score >= 50 ? 'var(--medium)' : 'var(--critical)';
+  }
 
-        // 📈 Reporting Logic
-        function exportCSV() {
-            let csv = "Asset,Issue,Severity,Timestamp\n";
-            const findings = document.querySelectorAll("#findings-body tr");
-            findings.forEach(row => {
-                const cols = row.querySelectorAll("td");
-                const timestamp = cols[0].querySelector("span").innerText;
-                csv += `"${cols[0].firstChild.textContent.trim()}","${cols[1].innerText}","${cols[2].innerText}","${timestamp}"\n`;
-            });
-            const blob = new Blob([csv], { type: 'text/csv' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'CloudSentinel_Audit.csv';
-            a.click();
-        }
+  // ── Charts ─────────────────────────────────────────────────────
+  function renderCharts(data) {
+    if (trendChart)    trendChart.destroy();
+    if (severityChart) severityChart.destroy();
 
-        function generatePDF() {
-            const { jsPDF } = window.jspdf;
-            const doc = new jsPDF();
-            doc.setFontSize(18);
-            doc.text("CloudSentinel Security Audit Report", 14, 20);
-            doc.setFontSize(10);
-            doc.text(`Generated on: ${new Date().toLocaleString()}`, 14, 28);
-            
-            doc.autoTable({
-                html: '#main-audit-table',
-                startY: 35,
-                theme: 'striped',
-                headStyles: { fillColor: [59, 130, 246] },
-                styles: { fontSize: 8 }
-            });
-            doc.save("CloudSentinel_Report.pdf");
-        }
+    const crit = data.filter(f => f.severity === 'CRITICAL').length;
+    const med  = data.filter(f => f.severity === 'MEDIUM').length;
 
-        function initCharts(data) {
-            if (trendChart) trendChart.destroy();
-            if (severityChart) severityChart.destroy();
+    severityChart = new Chart(document.getElementById('severityChart'), {
+      type: 'doughnut',
+      data: {
+        labels: ['Critical', 'Medium'],
+        datasets: [{ data: [crit, med],
+          backgroundColor: ['rgba(239,68,68,.8)','rgba(245,158,11,.8)'],
+          borderWidth: 0, hoverOffset: 6 }]
+      },
+      options: {
+        cutout: '68%',
+        plugins: { legend: { position: 'bottom', labels: { color: '#64748b', font: { size: 11, family: 'Sora' }, padding: 14 } } }
+      }
+    });
 
-            const crit = data.filter(f => f.severity === 'CRITICAL').length;
-            const med = data.filter(f => f.severity === 'MEDIUM').length;
-            const info = data.filter(f => f.severity === 'INFO').length;
+    const sorted = [...data].sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp)).slice(-10);
+    let score = 100;
+    const trendPoints = sorted.map(f => {
+      if (f.severity === 'CRITICAL') score = Math.max(0, score - 10);
+      else if (f.severity === 'MEDIUM') score = Math.max(0, score - 5);
+      return score;
+    });
+    const trendLabels = sorted.map(f => f.timestamp ? new Date(f.timestamp).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '');
 
-            severityChart = new Chart(document.getElementById('severityChart'), {
-                type: 'doughnut',
-                data: {
-                    labels: ['Critical', 'Medium', 'Info'],
-                    datasets: [{
-                        data: [crit, med, info],
-                        backgroundColor: ['#ef4444', '#f59e0b', '#3b82f6'],
-                        borderWidth: 0
-                    }]
-                },
-                options: { plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8', font: { size: 10 } } } } }
-            });
+    trendChart = new Chart(document.getElementById('trendChart'), {
+      type: 'line',
+      data: {
+        labels: trendLabels,
+        datasets: [{
+          label: 'Compliance %', data: trendPoints,
+          borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,.08)',
+          fill: true, tension: 0.4, pointRadius: 4,
+          pointBackgroundColor: '#10b981', pointBorderWidth: 0
+        }]
+      },
+      options: {
+        scales: {
+          y: { min: 0, max: 105, grid: { color: 'rgba(255,255,255,.05)' }, ticks: { color: '#64748b', font: { size: 11 } } },
+          x: { grid: { display: false }, ticks: { color: '#64748b', font: { size: 10 } } }
+        },
+        plugins: { legend: { display: false } }
+      }
+    });
+  }
 
-            const trendLabels = data.slice(0, 10).map(f => new Date(f.timestamp).toLocaleTimeString()).reverse();
-            const trendValues = data.slice(0, 10).map(f => f.severity === 'CRITICAL' ? 70 : 100).reverse();
+  // ── Costs ──────────────────────────────────────────────────────
+  async function loadCosts() {
+    try {
+      const data = await apiFetch('/api/detailed-costs');
+      const list = document.getElementById('cost-list');
+      list.innerHTML = Object.entries(data.breakdown).map(([k, v]) =>
+        `<div class="cost-item">
+          <span class="cost-name">${k.replace(/_/g,' ')}</span>
+          <span class="cost-val">$${v.toFixed(6)}</span>
+        </div>`
+      ).join('');
+      document.getElementById('cost-total').textContent = `$${data.per_scan_cost.toFixed(5)}`;
+    } catch (e) {
+      console.warn('Costs load failed:', e.message);
+    }
+  }
 
-            trendChart = new Chart(document.getElementById('trendChart'), {
-                type: 'line',
-                data: {
-                    labels: trendLabels,
-                    datasets: [{
-                        label: 'Compliance %',
-                        data: trendValues,
-                        borderColor: '#10b981',
-                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                        fill: true,
-                        tension: 0.4
-                    }]
-                },
-                options: {
-                    scales: {
-                        y: { min: 0, max: 105, grid: { color: '#334155' }, ticks: { color: '#94a3b8' } },
-                        x: { grid: { display: false }, ticks: { color: '#94a3b8' } }
-                    },
-                    plugins: { legend: { display: false } }
-                }
-            });
-        }
+  // ── Settings ───────────────────────────────────────────────────
+  function saveSettings() {
+    BASE_URL = document.getElementById('cfg-url').value.trim();
+    toast('Settings saved locally.', 'ok');
+  }
 
-        fetchFindings();
-        fetchCosts();
-    </script>
+  // ── Reports ────────────────────────────────────────────────────
+  function exportCSV() {
+    const rows = [['Resource','Issue','CIS Control','Severity','Timestamp']];
+    allFindings.forEach(f => rows.push([f.resource, f.issue, f.cis_control||'', f.severity, f.timestamp||'']));
+    const csv  = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const link = document.createElement('a');
+    link.href  = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+    link.download = `CloudSentinel_${new Date().toISOString().slice(0,10)}.csv`;
+    link.click();
+  }
+
+  function generatePDF() {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(20);
+    doc.setTextColor(59,130,246);
+    doc.text('CloudSentinel Security Report', 14, 22);
+    doc.setFontSize(10);
+    doc.setTextColor(100,116,139);
+    doc.text(`Generated: ${new Date().toLocaleString()}   |   Project: ${document.getElementById('cfg-url')?.value || BASE_URL}`, 14, 30);
+    doc.autoTable({
+      head: [['Resource','Issue','CIS Control','Severity','Timestamp']],
+      body: allFindings.map(f => [f.resource, f.issue.replace(/_/g,' '), f.cis_control||'', f.severity, f.timestamp ? new Date(f.timestamp).toLocaleString() : '']),
+      startY: 36,
+      theme: 'striped',
+      headStyles: { fillColor: [59,130,246], fontSize: 8, fontStyle: 'bold' },
+      bodyStyles: { fontSize: 8 },
+      alternateRowStyles: { fillColor: [245,247,255] },
+    });
+    doc.save(`CloudSentinel_${new Date().toISOString().slice(0,10)}.pdf`);
+  }
+</script>
 </body>
 </html>

@@ -1,5 +1,7 @@
 fastapi
 uvicorn
+httpx
 google-cloud-bigquery
 google-cloud-asset
 google-cloud-compute
+google-cloud-storage
