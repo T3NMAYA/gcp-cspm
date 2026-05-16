@@ -1,5 +1,7 @@
 import os
 import smtplib
+import uuid
+from contextlib import asynccontextmanager
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone, timedelta
@@ -10,7 +12,24 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from google.cloud import bigquery, asset_v1, compute_v1, storage
 
-app = FastAPI(title="CloudSentinel CSPM API", version="2.1")
+
+# ── Startup: ensure scan_id column exists in BQ ──────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Add scan_id column to findings table if it doesn't already exist."""
+    try:
+        client = bigquery.Client()
+        client.query(
+            f"ALTER TABLE `{os.getenv('GOOGLE_CLOUD_PROJECT','cloudsentinel-gcp-2026')}"
+            f".cspm_data.findings` ADD COLUMN IF NOT EXISTS scan_id STRING"
+        ).result()
+        print("[STARTUP] BQ schema migration OK (scan_id column ensured).")
+    except Exception as e:
+        print(f"[STARTUP] BQ migration skipped (table may not exist yet): {e}")
+    yield
+
+
+app = FastAPI(title="CloudSentinel CSPM API", version="2.2", lifespan=lifespan)
 
 # ── Config ──────────────────────────────────────────────────────────────────
 PROJECT_ID        = os.getenv("GOOGLE_CLOUD_PROJECT", "cloudsentinel-gcp-2026")
@@ -295,6 +314,12 @@ def health():
 @app.get("/scan")
 @app.post("/scan")
 async def run_scan(api_key: str = Depends(verify_api_key)):
+    # FIX #1/#2: Every finding in this scan shares one scan_id so
+    # /api/findings can return only the *latest* scan, not all-time history.
+    # This prevents the compliance score from being stuck at 0% due to
+    # accumulated historical findings inflating the issue count.
+    scan_id = str(uuid.uuid4())
+
     findings = []
     check_public_storage_buckets(findings)
     check_vm_public_ips(findings)
@@ -304,6 +329,10 @@ async def run_scan(api_key: str = Depends(verify_api_key)):
     check_bucket_uniform_iam(findings)
     check_os_login_disabled(findings)
 
+    # Stamp every finding with the shared scan_id
+    for f in findings:
+        f["scan_id"] = scan_id
+
     # Add a clean INFO record if no real issues
     if not findings:
         findings.append({
@@ -312,6 +341,7 @@ async def run_scan(api_key: str = Depends(verify_api_key)):
             "severity":    "INFO",
             "cis_control": "N/A",
             "timestamp":   now_ist(),
+            "scan_id":     scan_id,
         })
 
     slack_sent = email_sent = False
@@ -334,14 +364,72 @@ async def run_scan(api_key: str = Depends(verify_api_key)):
 
 @app.get("/api/findings")
 async def get_findings(api_key: str = Depends(verify_api_key)):
+    """
+    Returns ALL historical findings (last 200 rows) so the findings table
+    shows a full audit trail across all scans.
+    """
     try:
         client = bigquery.Client()
-        # Return ALL severities including INFO so the chart can display them
         query = f"""
             SELECT resource, issue, severity, cis_control, timestamp
             FROM `{PROJECT_ID}.cspm_data.findings`
             ORDER BY timestamp DESC
-            LIMIT 100
+            LIMIT 200
+        """
+        return [
+            {
+                "resource":    getattr(row, "resource", "N/A"),
+                "issue":       getattr(row, "issue", "Unknown"),
+                "severity":    getattr(row, "severity", "INFO"),
+                "cis_control": getattr(row, "cis_control", ""),
+                "timestamp":   str(getattr(row, "timestamp", "")),
+            }
+            for row in client.query(query).result()
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/latest-scan")
+async def get_latest_scan(api_key: str = Depends(verify_api_key)):
+    """
+    Returns ONLY the most recent scan findings.
+    Used by the dashboard for compliance score, critical/medium stat cards,
+    and the pie chart so they always reflect current state, not history.
+    """
+    try:
+        client = bigquery.Client()
+        query = f"""
+            WITH latest_scan AS (
+                SELECT scan_id
+                FROM `{PROJECT_ID}.cspm_data.findings`
+                WHERE scan_id IS NOT NULL
+                ORDER BY timestamp DESC
+                LIMIT 1
+            ),
+            legacy_window AS (
+                SELECT timestamp AS max_ts
+                FROM `{PROJECT_ID}.cspm_data.findings`
+                ORDER BY timestamp DESC
+                LIMIT 1
+            )
+            SELECT
+                f.resource,
+                f.issue,
+                f.severity,
+                f.cis_control,
+                f.timestamp
+            FROM `{PROJECT_ID}.cspm_data.findings` f
+            WHERE
+                (
+                    (SELECT scan_id FROM latest_scan LIMIT 1) IS NOT NULL
+                    AND f.scan_id = (SELECT scan_id FROM latest_scan LIMIT 1)
+                    OR
+                    (SELECT scan_id FROM latest_scan LIMIT 1) IS NULL
+                    AND f.timestamp >= (SELECT max_ts FROM legacy_window)
+                )
+            ORDER BY f.timestamp DESC
+            LIMIT 200
         """
         return [
             {
